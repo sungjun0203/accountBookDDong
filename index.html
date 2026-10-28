@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="가계부">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<title>가계부</title>
+<!--
+  읽기 전용 가계부 대시보드 (외부 정적 페이지)
+  주소: index.html#u=<Apps Script 배포 ID>&k=<VIEW_TOKEN>[&m=YYYY-MM]
+  - u·k 는 # 뒤에만 둔다 → 이 페이지를 올린 호스팅 서버로 전송되지 않고, 저장소에도 들어가지 않는다
+  - 운영 웹앱의 ?view=dashdata (Dashboard.gs) 가 돌려준 화면 조각(서버에서 이스케이프)과 데이터를 그린다
+  - 이 페이지에는 비밀값이 없다
+-->
+<style>
+:root{--bg:#F2F4F6;--text:#191F28;--mute:#8B95A1;--accent:#0FA37F}
+@media (prefers-color-scheme:dark){:root{--bg:#0F1013;--text:#ECEDEF;--mute:#7D848D;--accent:#2ED3A3}}
+html,body{background:var(--bg);color:var(--text)}
+body{margin:0;font:16px/1.45 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+#state{text-align:center;padding:120px 24px;color:var(--mute)}
+#state h2{color:var(--text);font-size:20px;margin:12px 0 6px}
+#state .emoji{font-size:44px}
+.spin{width:28px;height:28px;margin:0 auto;border:3px solid color-mix(in srgb,var(--mute) 30%,transparent);border-top-color:var(--accent);border-radius:50%;animation:s .8s linear infinite}
+@keyframes s{to{transform:rotate(360deg)}}
+#sync{position:fixed;left:50%;top:max(10px,env(safe-area-inset-top));transform:translateX(-50%);z-index:9;display:none;
+  align-items:center;gap:8px;padding:6px 12px;border-radius:20px;font-size:13px;color:var(--mute);
+  background:color-mix(in srgb,var(--bg) 85%,transparent);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+#sync.on{display:flex}#sync .spin{width:12px;height:12px;border-width:2px;margin:0}
+</style>
+<style id="dash-css"></style>
+</head>
+<body>
+<div id="sync"><div class="spin"></div><span>최신 값 불러오는 중</span></div>
+<main id="main"></main>
+<div id="state"><div class="spin"></div><p>불러오는 중…</p></div>
+<script>
+(function () {
+  var main = document.getElementById("main"), state = document.getElementById("state");
+  var css = document.getElementById("dash-css"), sync = document.getElementById("sync");
+  var seq = 0;
+
+  function params() {
+    var o = {};
+    location.hash.replace(/^#/, "").split("&").forEach(function (kv) {
+      var i = kv.indexOf("=");
+      if (i > 0) o[decodeURIComponent(kv.slice(0, i))] = decodeURIComponent(kv.slice(i + 1));
+    });
+    return o;
+  }
+  function hashOf(o) {
+    return "#" + ["u", "k", "m", "api"].filter(function (n) { return o[n]; })
+      .map(function (n) { return n + "=" + encodeURIComponent(o[n]); }).join("&");
+  }
+  function show(emoji, title, msg) {
+    state.textContent = "";
+    var e = document.createElement("div"); e.className = "emoji"; e.textContent = emoji;
+    var h = document.createElement("h2"); h.textContent = title;
+    var p = document.createElement("p"); p.textContent = msg;
+    state.appendChild(e); state.appendChild(h); state.appendChild(p);
+    state.style.display = "";
+  }
+  function apiUrl(p) {
+    // 로컬 시험용: api=http://127.0.0.1:포트/exec 만 허용
+    if (p.api && /^http:\/\/(127\.0\.0\.1|localhost):\d+\/exec$/.test(p.api)) return p.api;
+    if (/^[A-Za-z0-9_-]{20,}$/.test(p.u || "")) return "https://script.google.com/macros/s/" + p.u + "/exec";
+    return null;
+  }
+
+  // 마지막으로 받은 화면을 이 기기에 보관 → 다음에 열 때 즉시 표시 (보기 키는 저장하지 않음)
+  function cacheKey(p, month) { return "dash:" + (p.u || p.api) + ":" + (month || "cur"); }
+  function cacheGet(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }
+  function cachePut(k, res) { try { localStorage.setItem(k, JSON.stringify({ at: Date.now(), res: res })); } catch (e) {} }
+  function fetchData(api, p, month) {
+    var q = api + "?view=dashdata&k=" + encodeURIComponent(p.k) + (month ? "&m=" + encodeURIComponent(month) : "");
+    return fetch(q, { cache: "no-store" }).then(function (r) { return r.json(); });
+  }
+
+  function render(res, keepScroll) {
+    state.style.display = "none";
+    if (res.css) css.textContent = res.css;
+    document.title = "가계부 " + Number(String(res.month).slice(5)) + "월";
+    var y = window.scrollY;
+    main.innerHTML = res.body; // 서버(Dashboard.gs)에서 이스케이프한 조각, 스크립트 없음
+    if (res.script && res.data) {
+      window.DATA = res.data;
+      var s = document.createElement("script");
+      s.textContent = res.script; // 내역 목록: textContent 로만 그림
+      document.body.appendChild(s);
+      s.remove();
+    }
+    window.scrollTo(0, keepScroll ? y : 0);
+  }
+
+  // 이전 달을 미리 받아 두면 ‹ 를 눌렀을 때 바로 보인다 (5분 안에 받은 것이 있으면 생략)
+  function prefetch(api, p, month) {
+    var k = cacheKey(p, month), c = cacheGet(k);
+    if (c && Date.now() - c.at < 5 * 60 * 1000) return;
+    fetchData(api, p, month).then(function (res) { if (res.ok) cachePut(k, res); }).catch(function () {});
+  }
+  function prevMonth(m) {
+    var y = Number(m.slice(0, 4)), n = Number(m.slice(5)) - 1;
+    if (n < 1) { n = 12; y--; }
+    return y + "-" + (n < 10 ? "0" : "") + n;
+  }
+
+  function load(isRefresh) {
+    var p = params();
+    var api = apiUrl(p);
+    if (!api || !p.k) { main.textContent = ""; show("🔒", "주소를 확인하세요", "주소의 # 뒤에 u(배포 ID)와 k(보기 키)가 있어야 합니다."); return; }
+    var my = ++seq;
+    var k = cacheKey(p, p.m), cached = cacheGet(k);
+    if (cached && cached.res && !isRefresh) render(cached.res, false);
+    else if (!main.firstChild) state.style.display = "";
+    sync.className = main.firstChild ? "on" : "";
+    fetchData(api, p, p.m)
+      .then(function (res) {
+        if (my !== seq) return;
+        sync.className = "";
+        if (!res.ok) { main.textContent = ""; show("🔒", "접근할 수 없습니다", res.message || "보기 키를 확인하세요."); return; }
+        cachePut(k, res);
+        render(res, !!cached || isRefresh);
+        prefetch(api, p, prevMonth(res.month));
+      })
+      .catch(function (err) {
+        if (my !== seq) return;
+        sync.className = "";
+        if (!main.firstChild) show("⚠️", "불러오지 못했습니다", "인터넷 연결을 확인하고 다시 열어 주세요. (" + err.message + ")");
+      });
+  }
+
+  // 월 이동 링크(#m=YYYY-MM): u·k 를 유지한 채 m 만 바꾼다
+  document.addEventListener("click", function (ev) {
+    var a = ev.target.closest && ev.target.closest('a[href^="#m="]');
+    if (!a) return;
+    ev.preventDefault();
+    var p = params();
+    p.m = a.getAttribute("href").slice(3);
+    location.hash = hashOf(p);
+  });
+  window.addEventListener("hashchange", function () { load(false); });
+  // 홈 화면에서 다시 열었을 때 최신 값으로 (화면은 그대로 두고 값만 교체)
+  document.addEventListener("visibilitychange", function () { if (!document.hidden && main.firstChild) load(true); });
+  load(false);
+})();
+</script>
+</body>
+</html>
