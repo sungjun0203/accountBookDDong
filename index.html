@@ -10,6 +10,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#F2F4F6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0F1013" media="(prefers-color-scheme: dark)">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <title>가계부</title>
 <!--
   읽기 전용 가계부 대시보드 (외부 정적 페이지)
@@ -17,6 +20,8 @@
   - u·k 는 # 뒤에만 둔다 → 이 페이지를 올린 호스팅 서버로 전송되지 않고, 저장소에도 들어가지 않는다
   - 운영 웹앱의 ?view=dashdata (Dashboard.gs) 가 돌려준 화면 조각(서버에서 이스케이프)과 데이터를 그린다
   - 이 페이지에는 비밀값이 없다
+  - 안드로이드 설치형 웹앱: 매니페스트의 시작 주소에는 # 이 없으므로, 주소로 한 번 연 u·k 를 이 기기에 보관해 두고 쓴다
+    (아이폰은 홈 화면에 추가할 때의 주소를 그대로 쓰므로 매니페스트를 붙이지 않는다)
 -->
 <style>
 :root{--bg:#F2F4F6;--text:#191F28;--mute:#8B95A1;--accent:#0FA37F}
@@ -45,13 +50,28 @@ body{margin:0;font:16px/1.45 -apple-system,BlinkMacSystemFont,"Apple SD Gothic N
   var css = document.getElementById("dash-css"), sync = document.getElementById("sync");
   var seq = 0;
 
+  var CONN = "dash:conn";
   function params() {
     var o = {};
     location.hash.replace(/^#/, "").split("&").forEach(function (kv) {
       var i = kv.indexOf("=");
       if (i > 0) o[decodeURIComponent(kv.slice(0, i))] = decodeURIComponent(kv.slice(i + 1));
     });
+    try {
+      if (o.k && (o.u || o.api)) localStorage.setItem(CONN, JSON.stringify({ u: o.u, k: o.k, api: o.api }));
+      else {
+        var c = JSON.parse(localStorage.getItem(CONN)) || {};
+        o.u = c.u; o.k = c.k; o.api = c.api;
+      }
+    } catch (e) {}
     return o;
+  }
+
+  if (!/iPhone|iPad|iPod/.test(navigator.userAgent)) {
+    var mf = document.createElement("link");
+    mf.rel = "manifest"; mf.href = "manifest.webmanifest";
+    document.head.appendChild(mf);
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(function () {});
   }
   function hashOf(o) {
     return "#" + ["u", "k", "m", "api"].filter(function (n) { return o[n]; })
