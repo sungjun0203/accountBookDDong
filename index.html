@@ -201,8 +201,9 @@ body{margin:0;font:16px/1.45 -apple-system,BlinkMacSystemFont,"Apple SD Gothic N
     var p = params();
     var api = apiUrl(p);
     fab.className = p.w ? "on" : "";
-    // 등록 키는 기기에 보관했으므로 주소창·방문 기록에서 지운다
-    if (/[#&]w=/.test(location.hash)) history.replaceState(null, "", hashOf(p));
+    // 등록 키는 기기에 보관했으므로 주소창·방문 기록에서 지운다.
+    // 아이폰은 홈 화면 앱이 Safari 와 저장소를 따로 쓰고 "홈 화면에 추가" 때의 주소로 열리므로 남겨 둔다
+    if (/[#&]w=/.test(location.hash) && !/iPhone|iPad|iPod/.test(navigator.userAgent)) history.replaceState(null, "", hashOf(p));
     if (!api || !p.k) { main.textContent = ""; show("🔒", "주소를 확인하세요", "주소의 # 뒤에 u(배포 ID)와 k(보기 키)가 있어야 합니다."); return; }
     var my = ++seq;
     var k = cacheKey(p, p.m), cached = cacheGet(k);
