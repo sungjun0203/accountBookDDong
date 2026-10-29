@@ -37,6 +37,30 @@ body{margin:0;font:16px/1.45 -apple-system,BlinkMacSystemFont,"Apple SD Gothic N
   align-items:center;gap:8px;padding:6px 12px;border-radius:20px;font-size:13px;color:var(--mute);
   background:color-mix(in srgb,var(--bg) 85%,transparent);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
 #sync.on{display:flex}#sync .spin{width:12px;height:12px;border-width:2px;margin:0}
+/* 수기 등록 */
+#fab{position:fixed;right:max(20px,env(safe-area-inset-right));bottom:max(24px,env(safe-area-inset-bottom));z-index:8;display:none;
+  width:60px;height:60px;border:0;border-radius:50%;background:var(--accent);color:#fff;font-size:34px;line-height:1;
+  box-shadow:0 6px 18px rgba(0,0,0,.25);cursor:pointer}
+#fab.on{display:block}
+#sheet{position:fixed;inset:0;z-index:10;display:none;background:rgba(0,0,0,.45);align-items:flex-end;justify-content:center}
+#sheet.on{display:flex}
+#sheet form{box-sizing:border-box;width:100%;max-width:560px;max-height:92vh;overflow:auto;background:var(--surface,#fff);
+  border-radius:24px 24px 0 0;padding:22px 20px max(20px,env(safe-area-inset-bottom))}
+#sheet h3{margin:0 0 16px;font-size:20px;display:flex;align-items:center}
+#sheet h3 button{margin-left:auto;border:0;background:none;color:var(--mute);font-size:26px;cursor:pointer;padding:0 4px}
+#sheet label{display:block;font-size:14px;color:var(--sub,var(--mute));margin:14px 0 6px}
+#sheet input,#sheet select{box-sizing:border-box;width:100%;font:inherit;font-size:17px;color:var(--text);background:var(--alt,#F7F8FA);
+  border:1px solid var(--line,#E5E8EB);border-radius:12px;padding:12px 14px;-webkit-appearance:none;appearance:none}
+#sheet input:focus,#sheet select:focus{outline:2px solid var(--accent);outline-offset:-1px}
+#cats{display:flex;flex-wrap:wrap;gap:8px}
+#cats button{font:inherit;font-size:15px;border:1px solid var(--line,#E5E8EB);background:var(--alt,#F7F8FA);color:var(--text);
+  border-radius:20px;padding:8px 14px;cursor:pointer}
+#cats button.on{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:700}
+#msg{min-height:20px;margin:14px 0 0;font-size:14px;color:var(--danger,#F04452)}
+#msg.ok{color:var(--accent)}
+#save{width:100%;margin-top:10px;border:0;border-radius:14px;padding:15px;font:inherit;font-size:17px;font-weight:700;
+  background:var(--accent);color:#fff;cursor:pointer}
+#save:disabled{opacity:.5}
 </style>
 <style id="dash-css"></style>
 </head>
@@ -44,6 +68,24 @@ body{margin:0;font:16px/1.45 -apple-system,BlinkMacSystemFont,"Apple SD Gothic N
 <div id="sync"><div class="spin"></div><span>최신 값 불러오는 중</span></div>
 <main id="main"></main>
 <div id="state"><div class="spin"></div><p>불러오는 중…</p></div>
+<button id="fab" type="button" aria-label="수기 등록">+</button>
+<div id="sheet">
+  <form id="entry" autocomplete="off">
+    <h3>수기 등록<button type="button" id="close" aria-label="닫기">×</button></h3>
+    <label>카테고리</label>
+    <div id="cats"></div>
+    <label for="f-item">품목</label>
+    <input id="f-item" maxlength="60" placeholder="예: 시장 반찬" required>
+    <label for="f-amount">금액 (원)</label>
+    <input id="f-amount" inputmode="numeric" placeholder="예: 12,000" required>
+    <label for="f-pay">결제수단</label>
+    <select id="f-pay"></select>
+    <label for="f-date">날짜</label>
+    <input id="f-date" type="date" required>
+    <p id="msg"></p>
+    <button id="save" type="submit">등록</button>
+  </form>
+</div>
 <script>
 (function () {
   var main = document.getElementById("main"), state = document.getElementById("state");
@@ -58,11 +100,12 @@ body{margin:0;font:16px/1.45 -apple-system,BlinkMacSystemFont,"Apple SD Gothic N
       if (i > 0) o[decodeURIComponent(kv.slice(0, i))] = decodeURIComponent(kv.slice(i + 1));
     });
     try {
-      if (o.k && (o.u || o.api)) localStorage.setItem(CONN, JSON.stringify({ u: o.u, k: o.k, api: o.api }));
-      else {
-        var c = JSON.parse(localStorage.getItem(CONN)) || {};
-        o.u = c.u; o.k = c.k; o.api = c.api;
-      }
+      var c = JSON.parse(localStorage.getItem(CONN)) || {};
+      if (o.k && (o.u || o.api)) { c.u = o.u; c.k = o.k; c.api = o.api; }
+      else { o.u = c.u; o.k = c.k; o.api = c.api; }
+      // 등록 키(w)는 처음 받은 주소에만 있다 → 이후 월 이동 주소에는 넣지 않고 기기에 보관한 값을 쓴다
+      if (o.w) c.w = o.w; else o.w = c.w;
+      localStorage.setItem(CONN, JSON.stringify(c));
     } catch (e) {}
     return o;
   }
@@ -132,6 +175,9 @@ body{margin:0;font:16px/1.45 -apple-system,BlinkMacSystemFont,"Apple SD Gothic N
   function load(isRefresh) {
     var p = params();
     var api = apiUrl(p);
+    fab.className = p.w ? "on" : "";
+    // 등록 키는 기기에 보관했으므로 주소창·방문 기록에서 지운다
+    if (/[#&]w=/.test(location.hash)) history.replaceState(null, "", hashOf(p));
     if (!api || !p.k) { main.textContent = ""; show("🔒", "주소를 확인하세요", "주소의 # 뒤에 u(배포 ID)와 k(보기 키)가 있어야 합니다."); return; }
     var my = ++seq;
     var k = cacheKey(p, p.m), cached = cacheGet(k);
@@ -163,6 +209,106 @@ body{margin:0;font:16px/1.45 -apple-system,BlinkMacSystemFont,"Apple SD Gothic N
     p.m = a.getAttribute("href").slice(3);
     location.hash = hashOf(p);
   });
+  // ── 수기 등록: 등록 키(w)가 있는 기기에서만 + 버튼 표시. 저장은 운영 웹앱 doPost {"entry":1} (Entry.gs) ──
+  var fab = document.getElementById("fab"), sheet = document.getElementById("sheet"), form = document.getElementById("entry");
+  var cats = document.getElementById("cats"), fItem = document.getElementById("f-item"), fAmount = document.getElementById("f-amount");
+  var fPay = document.getElementById("f-pay"), fDate = document.getElementById("f-date");
+  var msg = document.getElementById("msg"), saveBtn = document.getElementById("save");
+  var entryCat = "", txId = "", busy = false;
+
+  function entryPost(action, payload) {
+    var p = params(), api = apiUrl(p);
+    // 본문이 text/plain 이면 사전 확인(CORS preflight) 없이 보낼 수 있다. 서버는 본문 JSON 만 읽는다
+    return fetch(api, { method: "POST", body: JSON.stringify({ entry: 1, k: p.w, action: action, payload: payload || {} }) })
+      .then(function (r) { return r.json(); });
+  }
+  function newTxId() {
+    return "web-" + (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
+  }
+  function setMsg(text, ok) { msg.textContent = text; msg.className = ok ? "ok" : ""; }
+  function pickCat(name) {
+    entryCat = name;
+    Array.prototype.forEach.call(cats.children, function (b) { b.classList.toggle("on", b.dataset.name === name); });
+  }
+  function fillConfig(c) {
+    cats.textContent = "";
+    c.categories.forEach(function (x) {
+      var b = document.createElement("button");
+      b.type = "button"; b.dataset.name = x.name; b.textContent = x.icon + " " + x.name;
+      b.onclick = function () { pickCat(x.name); };
+      cats.appendChild(b);
+    });
+    fPay.textContent = "";
+    ["완료"].concat(c.payments.filter(function (x) { return x !== "완료"; })).forEach(function (x) {
+      var o = document.createElement("option"); o.value = o.textContent = x; fPay.appendChild(o);
+    });
+    try { localStorage.setItem("entry:config", JSON.stringify(c)); } catch (e) {}
+  }
+  function today() {
+    var d = new Date(Date.now() + 9 * 3600 * 1000); // 서울 기준
+    return d.toISOString().slice(0, 10);
+  }
+  function openEntry() {
+    if (!txId) {
+      txId = newTxId();
+      form.reset(); pickCat(""); fDate.value = today(); setMsg("");
+    }
+    sheet.className = "on";
+    try { var c = JSON.parse(localStorage.getItem("entry:config")); if (c && !cats.firstChild) fillConfig(c); } catch (e) {}
+    entryPost("config").then(function (r) {
+      if (!r.ok) { setMsg(r.code === "DENIED" ? "등록 키가 맞지 않습니다. 등록 주소로 다시 열어 주세요." : r.message); return; }
+      var keepPay = fPay.value, keepCat = entryCat;
+      fillConfig(r.data);
+      pickCat(keepCat); if (keepPay) fPay.value = keepPay;
+    }).catch(function () { if (!cats.firstChild) setMsg("인터넷 연결을 확인해 주세요."); });
+  }
+  function closeEntry() { if (!busy) sheet.className = ""; }
+
+  fab.onclick = openEntry;
+  document.getElementById("close").onclick = closeEntry;
+  sheet.addEventListener("click", function (ev) { if (ev.target === sheet) closeEntry(); });
+  fAmount.addEventListener("input", function () {
+    var n = fAmount.value.replace(/[^\d]/g, "").replace(/^0+/, "");
+    fAmount.value = n.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  });
+  // 입력을 바꾸면 다른 거래 → 새 txId (같은 내용 재시도만 같은 txId 로 보내 중복 기록을 막는다)
+  form.addEventListener("input", function () { txId = newTxId(); });
+  cats.addEventListener("click", function () { txId = newTxId(); });
+
+  form.addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    if (busy) return;
+    var amount = Number(fAmount.value.replace(/[^\d]/g, ""));
+    if (!entryCat) return setMsg("카테고리를 고르세요.");
+    if (!fItem.value.trim()) return setMsg("품목을 입력하세요.");
+    if (!amount) return setMsg("금액을 입력하세요.");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fDate.value)) return setMsg("날짜를 고르세요.");
+    busy = true; saveBtn.disabled = true; saveBtn.textContent = "등록 중…"; setMsg("");
+    entryPost("save", {
+      txId: txId, category: entryCat, item: fItem.value.trim(), amount: amount,
+      payment: fPay.value, date: fDate.value.replace(/-/g, "")
+    }).then(function (r) {
+      if (r.ok) {
+        var d = r.data || {};
+        setMsg((r.code === "DUPLICATE" ? "이미 등록된 건입니다 · " : "등록 완료 · ") + (d.sheet || "") + (d.row ? " " + d.row + "행" : ""), true);
+        txId = "";
+        setTimeout(function () { sheet.className = ""; }, 900);
+        var p = params(), m = fDate.value.slice(0, 7);
+        if (p.m && p.m !== m) { p.m = m; location.hash = hashOf(p); } else load(true);
+      } else if (r.code === "DENIED") {
+        setMsg("등록 키가 맞지 않습니다. 등록 주소로 다시 열어 주세요.");
+      } else {
+        // 입력 오류는 고쳐서 다시 보내도 같은 txId (기록되지 않았으므로 안전)
+        setMsg(r.message || r.code);
+      }
+    }).catch(function (err) {
+      // 응답을 못 받음 → 기록됐을 수도 있다. 같은 txId 로 다시 누르면 DUPLICATE 로 확인된다
+      setMsg("응답을 받지 못했습니다. 다시 누르면 중복 없이 확인합니다. (" + err.message + ")");
+    }).then(function () {
+      busy = false; saveBtn.disabled = false; saveBtn.textContent = "등록";
+    });
+  });
+
   window.addEventListener("hashchange", function () { load(false); });
   // 홈 화면에서 다시 열었을 때 최신 값으로 (화면은 그대로 두고 값만 교체)
   document.addEventListener("visibilitychange", function () { if (!document.hidden && main.firstChild) load(true); });
