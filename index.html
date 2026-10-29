@@ -44,9 +44,25 @@ body{margin:0;font:16px/1.45 -apple-system,BlinkMacSystemFont,"Apple SD Gothic N
 #fab.on{display:block}
 #sheet{position:fixed;inset:0;z-index:10;display:none;background:rgba(0,0,0,.45);align-items:flex-end;justify-content:center}
 #sheet.on{display:flex}
-#sheet form{box-sizing:border-box;width:100%;max-width:560px;max-height:92vh;overflow:auto;background:var(--surface,#fff);
+#sheet .panel{box-sizing:border-box;width:100%;max-width:560px;max-height:92vh;overflow:auto;background:var(--surface,#fff);
   border-radius:24px 24px 0 0;padding:22px 20px max(20px,env(safe-area-inset-bottom))}
-#sheet h3{margin:0 0 16px;font-size:20px;display:flex;align-items:center}
+#sheet h3{margin:0 0 14px;font-size:20px;display:flex;align-items:center}
+#tabs{display:flex;gap:6px;background:var(--alt,#F7F8FA);border-radius:12px;padding:4px;margin-bottom:6px}
+#tabs button{flex:1;border:0;background:none;color:var(--sub,var(--mute));font:inherit;font-size:15px;padding:9px;border-radius:9px;cursor:pointer}
+#tabs button.on{background:var(--surface,#fff);color:var(--text);font-weight:700;box-shadow:0 1px 3px rgba(0,0,0,.15)}
+#del[hidden],#entry[hidden]{display:none}
+#del .mnav{display:flex;align-items:center;justify-content:center;gap:14px;margin:12px 0 8px;font-weight:700;font-size:17px}
+#del .mnav button{border:0;background:none;color:var(--sub,var(--mute));font-size:26px;padding:0 10px;cursor:pointer}
+#dlist{margin-top:8px}
+.drow{display:flex;align-items:center;gap:10px;padding:12px 2px;border-top:1px solid var(--line,#E5E8EB)}
+.drow .info{flex:1;min-width:0}
+.drow .t{font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.drow .s{font-size:13px;color:var(--mute)}
+.drow .a{font-weight:700;white-space:nowrap}
+.drow button{border:1px solid var(--danger,#F04452);color:var(--danger,#F04452);background:none;border-radius:10px;padding:7px 11px;font:inherit;font-size:14px;cursor:pointer}
+.drow button:disabled{opacity:.4}
+#dmsg{min-height:20px;margin:10px 0 0;font-size:14px;color:var(--danger,#F04452)}#dmsg.ok{color:var(--accent)}
+.dempty{padding:28px 0;text-align:center;color:var(--mute)}
 #sheet h3 button{margin-left:auto;border:0;background:none;color:var(--mute);font-size:26px;cursor:pointer;padding:0 4px}
 #sheet label{display:block;font-size:14px;color:var(--sub,var(--mute));margin:14px 0 6px}
 #sheet input,#sheet select{box-sizing:border-box;width:100%;font:inherit;font-size:17px;color:var(--text);background:var(--alt,#F7F8FA);
@@ -68,10 +84,12 @@ body{margin:0;font:16px/1.45 -apple-system,BlinkMacSystemFont,"Apple SD Gothic N
 <div id="sync"><div class="spin"></div><span>최신 값 불러오는 중</span></div>
 <main id="main"></main>
 <div id="state"><div class="spin"></div><p>불러오는 중…</p></div>
-<button id="fab" type="button" aria-label="수기 등록">+</button>
+<button id="fab" type="button" aria-label="수기 등록·삭제">+</button>
 <div id="sheet">
+ <div class="panel">
+  <h3>수기 등록<button type="button" id="close" aria-label="닫기">×</button></h3>
+  <div id="tabs"><button type="button" data-tab="entry" class="on">등록</button><button type="button" data-tab="del">삭제</button></div>
   <form id="entry" autocomplete="off">
-    <h3>수기 등록<button type="button" id="close" aria-label="닫기">×</button></h3>
     <label>카테고리</label>
     <div id="cats"></div>
     <label for="f-item">품목</label>
@@ -85,6 +103,13 @@ body{margin:0;font:16px/1.45 -apple-system,BlinkMacSystemFont,"Apple SD Gothic N
     <p id="msg"></p>
     <button id="save" type="submit">등록</button>
   </form>
+  <div id="del" hidden>
+    <div class="mnav"><button type="button" id="dprev" aria-label="이전 달">‹</button><span id="dmonth"></span><button type="button" id="dnext" aria-label="다음 달">›</button></div>
+    <input id="dq" type="search" placeholder="품목·결제수단·금액 검색">
+    <p id="dmsg"></p>
+    <div id="dlist"></div>
+  </div>
+ </div>
 </div>
 <script>
 (function () {
@@ -264,7 +289,84 @@ body{margin:0;font:16px/1.45 -apple-system,BlinkMacSystemFont,"Apple SD Gothic N
   }
   function closeEntry() { if (!busy) sheet.className = ""; }
 
-  fab.onclick = openEntry;
+  // ── 삭제 탭: 그 달 내역에서 골라 지운다 (서버는 화면에서 본 값과 시트 값이 같을 때만 그 행 4칸을 비움) ──
+  var del = document.getElementById("del"), dlist = document.getElementById("dlist"), dq = document.getElementById("dq");
+  var dmsg = document.getElementById("dmsg"), dmonth = document.getElementById("dmonth");
+  var delMonth = "", delRows = [], delSeq = 0;
+  var ICONS = { "식비": "🍚", "생필품": "🛒", "기타": "📦", "자동차": "🚗", "ETC": "📌" };
+
+  function won(n) { return (n < 0 ? "-" : "") + String(Math.abs(Math.round(n || 0))).replace(/\B(?=(\d{3})+(?!\d))/g, ",") + "원"; }
+  function setDmsg(text, ok) { dmsg.textContent = text; dmsg.className = ok ? "ok" : ""; }
+  function shiftMonth(m, d) {
+    var y = Number(m.slice(0, 4)), n = Number(m.slice(5)) - 1 + d;
+    y += Math.floor(n / 12); n = ((n % 12) + 12) % 12 + 1;
+    return y + "-" + (n < 10 ? "0" : "") + n;
+  }
+  function showTab(name) {
+    Array.prototype.forEach.call(document.querySelectorAll("#tabs button"), function (b) { b.classList.toggle("on", b.dataset.tab === name); });
+    form.hidden = name !== "entry"; del.hidden = name !== "del";
+    if (name === "del") loadDel(delMonth || params().m || today().slice(0, 7));
+  }
+  function loadDel(m) {
+    delMonth = m;
+    dmonth.textContent = Number(m.slice(0, 4)) + "년 " + Number(m.slice(5)) + "월";
+    var my = ++delSeq;
+    delRows = []; renderDel(); setDmsg("불러오는 중…", true);
+    entryPost("list", { month: m }).then(function (r) {
+      if (my !== delSeq) return;
+      if (!r.ok) { setDmsg(r.code === "SHEET_NOT_FOUND" ? "이 달 시트가 없습니다." : (r.message || r.code)); return; }
+      setDmsg("");
+      delRows = r.data.rows.sort(function (a, b) { return String(b.date).localeCompare(String(a.date)) || b.row - a.row; });
+      renderDel();
+    }).catch(function () { if (my === delSeq) setDmsg("인터넷 연결을 확인해 주세요."); });
+  }
+  function renderDel() {
+    var q = dq.value.trim().toLowerCase();
+    dlist.textContent = "";
+    var rows = delRows.filter(function (x) {
+      return !q || [x.item, x.payment, x.category, String(x.amount)].join(" ").toLowerCase().indexOf(q) >= 0;
+    });
+    if (!rows.length && delRows.length) { var e = document.createElement("div"); e.className = "dempty"; e.textContent = "검색 결과가 없습니다."; dlist.appendChild(e); }
+    rows.forEach(function (x) {
+      var row = document.createElement("div"); row.className = "drow";
+      var info = document.createElement("div"); info.className = "info";
+      var t = document.createElement("div"); t.className = "t"; t.textContent = (ICONS[x.category] || "") + " " + x.item;
+      var s = document.createElement("div"); s.className = "s";
+      s.textContent = (x.date ? x.date.slice(5).replace("-", "/") + " · " : "") + x.category + " · " + (x.payment || "-");
+      info.appendChild(t); info.appendChild(s);
+      var a = document.createElement("div"); a.className = "a"; a.textContent = won(x.amount);
+      var b = document.createElement("button"); b.type = "button"; b.textContent = "삭제";
+      b.onclick = function () { deleteRow(x, b); };
+      row.appendChild(info); row.appendChild(a); row.appendChild(b);
+      dlist.appendChild(row);
+    });
+  }
+  function deleteRow(x, btn) {
+    if (busy) return;
+    if (!confirm(x.category + " / " + x.item + " / " + won(x.amount) + (x.date ? " (" + x.date + ")" : "") + "\n\n시트에서 삭제할까요? 되돌릴 수 없습니다.")) return;
+    busy = true; btn.disabled = true; btn.textContent = "삭제 중…";
+    entryPost("delete", { month: delMonth, category: x.category, row: x.row, date: x.date, item: x.item, amount: x.amount, payment: x.payment })
+      .then(function (r) {
+        if (r.ok) {
+          delRows = delRows.filter(function (y) { return y !== x; });
+          renderDel();
+          setDmsg((r.code === "ALREADY_DELETED" ? "이미 비어 있던 행입니다 · " : "삭제 완료 · ") + x.item + " " + won(x.amount), true);
+          load(true);
+        } else if (r.code === "CHANGED") {
+          setDmsg(r.message); loadDel(delMonth);
+        } else {
+          setDmsg(r.code === "DENIED" ? "등록 키가 맞지 않습니다." : (r.message || r.code));
+        }
+      })
+      .catch(function () { setDmsg("응답을 받지 못했습니다. 목록을 다시 불러와 확인하세요."); loadDel(delMonth); })
+      .then(function () { busy = false; btn.disabled = false; btn.textContent = "삭제"; });
+  }
+  Array.prototype.forEach.call(document.querySelectorAll("#tabs button"), function (b) { b.onclick = function () { showTab(b.dataset.tab); }; });
+  document.getElementById("dprev").onclick = function () { loadDel(shiftMonth(delMonth, -1)); };
+  document.getElementById("dnext").onclick = function () { loadDel(shiftMonth(delMonth, 1)); };
+  dq.addEventListener("input", renderDel);
+
+  fab.onclick = function () { delMonth = ""; showTab("entry"); openEntry(); };
   document.getElementById("close").onclick = closeEntry;
   sheet.addEventListener("click", function (ev) { if (ev.target === sheet) closeEntry(); });
   fAmount.addEventListener("input", function () {
